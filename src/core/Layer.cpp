@@ -86,11 +86,23 @@ void Layer::setLocked(bool locked)
 
 void Layer::setSource(Source::ptr source)
 {
-	if (sourceIsCompatible(source))
-	{
-		_source = source;
-	  _emitPropertyChanged("sourceId");
-	}
+  if (!source || source == _source || !sourceIsCompatible(source)) return;
+  auto oldTexture = qSharedPointerDynamicCast<Texture>(_source);
+  auto newTexture = qSharedPointerDynamicCast<Texture>(source);
+  // Preserve the normalized input crop when replacing a texture of a different
+  // size or editor position. Output calibration vertices must stay untouched.
+  if (_inputShape && oldTexture && newTexture) {
+    const QRectF from = oldTexture->getRect(), to = newTexture->getRect();
+    if (from.width() > 0 && from.height() > 0 && to.width() > 0 && to.height() > 0) {
+      for (int i = 0; i < _inputShape->nVertices(); ++i) {
+        const QPointF p = _inputShape->getVertex(i);
+        _inputShape->setVertex(i, to.x() + (p.x() - from.x()) * to.width() / from.width(),
+                                 to.y() + (p.y() - from.y()) * to.height() / from.height());
+      }
+    }
+  }
+  _source = source;
+  _emitPropertyChanged("sourceId");
 }
 
 void Layer::setSourceById(uid sourceId)
@@ -172,12 +184,12 @@ void Layer::_writeShape(QJsonObject& obj, bool isOutput)
 
 bool ColorLayer::sourceIsCompatible(Source::ptr source) const
 {
-	return source->inherits("mmp::Color");
+	return source && source->inherits("mmp::Color");
 }
 
 bool TextureLayer::sourceIsCompatible(Source::ptr source) const
 {
-	return source->inherits("mmp::Texture");
+	return source && source->inherits("mmp::Texture");
 }
 
 }

@@ -170,6 +170,7 @@ void MainWindow::handleLayerItemSelectionChanged(const QModelIndex &index)
   // Set current source and mappings.
   uid layerId = layerListModel->getItemId(index);
   Layer::ptr layer = mappingManager->getLayerById(layerId);
+  if (!layer || !layer->getSource()) return;
   uid sourceId = layer->getSource()->getId();
   // Set current mapping and source
   setCurrentLayer(layerId);
@@ -215,7 +216,7 @@ void MainWindow::handleLayerItemChanged(const QModelIndex &index)
 
   // Sync name.
   Layer::ptr layer = mappingManager->getLayerById(layerId);
-  Q_CHECK_PTR(layer);
+  if (!layer) return;
 
   // Change properties.
   layer->setName(index.data(Qt::EditRole).toString());
@@ -1055,26 +1056,32 @@ void MainWindow::setLayerItemSolo(bool solo)
 void MainWindow::loadLayerMedia()
 {
   QAction *action = qobject_cast<QAction *>(sender());
+  if (!action) return;
+
+  // Selecting library media clears the active layer, but the layer-list row
+  // still identifies the intended mapping. Retain it across the import dialog.
+  Layer::ptr target = getCurrentLayer();
+  if (!target) target = mappingManager->getLayerById(currentLayerItemId());
+  if (!target) return;
+  const uid targetId = target->getId();
   Source::ptr media;
-  uid currentLayerId = getCurrentLayer()->getId();
-
-  if (action) {
-    if (action->data().toString() == "import-new-media") {
-      // Due to the fact that we can't assign a media/source without adding a mesh
-      importMedia();
-      addMesh(); // Creating a temporary mesh
-      media = mappingManager->getSourceById(currentSourceId); // The last imported video is current ID
-      deleteLayer(getCurrentLayer()->getId()); // Delete the temporary mesh
-      setCurrentLayer(currentLayerId); // Set the previous selected layer as the current
-    } else {
-      media = mappingManager->getSourceById(action->data().toInt());
-    }
-
-    if (media && media != getCurrentLayer()->getSource() &&
-        getCurrentLayer()->sourceIsCompatible(media)) {
-      // Change layer source
-      getCurrentLayer()->setSource(media);
-    }
+  if (action->data().toString() == "import-new-media") {
+    const int countBefore = mappingManager->nSources();
+    importMedia();
+    if (mappingManager->nSources() > countBefore)
+      media = mappingManager->getSourceById(currentSourceId);
+  } else {
+    media = mappingManager->getSourceById(action->data().toInt());
+  }
+  if (mappingManager->getLayerById(targetId) != target) return;
+  setCurrentLayer(targetId);
+  if (media && media != target->getSource() && target->sourceIsCompatible(media)) {
+    target->setSource(media);
+    setCurrentSource(media->getId());
+    setCurrentLayer(targetId);
+    windowModified();
+    updatePlayingState();
+    updateCanvases();
   }
 }
 
@@ -2722,7 +2729,12 @@ void MainWindow::readSettings()
   outputWindow->restoreGeometry(settings.value("outputWindow").toByteArray());
 
   // new in 0.1.2:
-  outputFullScreenAction->setChecked(settings.value("displayOutputWindow", MM::DISPLAY_OUTPUT_WINDOW).toBool());
+  // Showing the OpenGL output can paint synchronously. Defer until the
+  // MainWindow singleton has finished construction, avoiding recursive creation.
+  const bool restoreOutput = settings.value("displayOutputWindow", MM::DISPLAY_OUTPUT_WINDOW).toBool();
+  QTimer::singleShot(0, this, [this, restoreOutput]() {
+    if (restoreOutput) outputFullScreenAction->setChecked(true);
+  });
   displayTestSignalAction->setChecked(settings.value("displayTestSignal", MM::DISPLAY_TEST_SIGNAL).toBool());
   displayControlsAction->setChecked(settings.value("displayControls", MM::DISPLAY_CONTROLS).toBool());
   outputWindow->setCanvasDisplayCrosshair(settings.value("displayControls", MM::DISPLAY_CONTROLS).toBool());
@@ -3084,7 +3096,7 @@ bool MainWindow::importMediaFile(const QString &fileName, bool isImage, bool isC
   uint mediaId = createMediaSource(NULL_UID, fileName, 0, 0, isImage, type);
 
   // Initialize position (center).
-  QSharedPointer<Video> media = qSharedPointerCast<Video>(mappingManager->getSourceById(mediaId));
+  QSharedPointer<Texture> media = qSharedPointerDynamicCast<Texture>(mappingManager->getSourceById(mediaId));
   Q_CHECK_PTR(media);
 
   media->setPosition((sourceCanvas->width()  - media->getWidth() ) / 2.0f,
@@ -3680,21 +3692,21 @@ void MainWindow::enableStickyVertices(bool value)
 
 void MainWindow::showLayerContextMenu(const QPoint &point)
 {
-  QWidget *objectSender = static_cast<QWidget*>(sender());
+  QWidget *objectSender = qobject_cast<QWidget*>(sender());
   uid layerId = currentLayerItemId();
+  if (sender() == layerItemDelegate)
+    layerId = layerListModel->getItemId(layerList->indexAt(point));
   Layer::ptr layer = mappingManager->getLayerById(layerId);
+  if (!layer) return;
+  setCurrentLayer(layerId);
 
-  // Switch to right action check state
   layerLockedAction->setChecked(layer->isLocked());
   layerHideAction->setChecked(!layer->isVisible());
   layerSoloAction->setChecked(layer->isSolo());
-
-  if (objectSender != nullptr) {
-    if (sender() == layerItemDelegate) // XXX: The item delegate is not a widget
-      layerContextMenu->exec(layerList->mapToGlobal(point));
-    else
-      layerContextMenu->exec(objectSender->mapToGlobal(point));
-  }
+  if (sender() == layerItemDelegate)
+    layerContextMenu->exec(layerList->viewport()->mapToGlobal(point));
+  else if (objectSender)
+    layerContextMenu->exec(objectSender->mapToGlobal(point));
 }
 
 void MainWindow::showSourceContextMenu(const QPoint &point)
@@ -3894,6 +3906,8 @@ void MainWindow::removeCurrentLayer() {
   _hasCurrentLayer = false;
   currentLayerId = NULL_UID;
   layerList->clearSelection();
+  // A later click on the same row must emit currentRowChanged again.
+  layerList->setCurrentIndex(QModelIndex());
 }
 
 void MainWindow::startOscReceiver()

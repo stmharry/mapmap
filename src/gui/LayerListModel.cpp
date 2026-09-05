@@ -27,18 +27,18 @@ LayerListModel::LayerListModel(QObject *parent) :
 
 int LayerListModel::rowCount(const QModelIndex &parent) const
 {
-  return (parent.isValid() && parent.column() != 0) ? 0 : layerList.size();
+  return parent.isValid() ? 0 : layerList.size();
 }
 
 int LayerListModel::columnCount(const QModelIndex &parent) const
 {
-  Q_UNUSED(parent)
-  return 3;
+  return parent.isValid() ? 0 : 3;
 }
 
 QVariant LayerListModel::data(const QModelIndex &index, int role) const
 {
-  if (!index.isValid())
+  if (!index.isValid() || index.model() != this || index.row() < 0 ||
+      index.row() >= layerList.size() || index.column() < 0 || index.column() >= 3)
     return QVariant();
 
   switch (role) {
@@ -83,7 +83,8 @@ QVariant LayerListModel::data(const QModelIndex &index, int role) const
 
 Qt::ItemFlags LayerListModel::flags(const QModelIndex &index) const
 {
-  if (!index.isValid())
+  if (!index.isValid() || index.model() != this || index.row() < 0 ||
+      index.row() >= layerList.size() || index.column() < 0 || index.column() >= 3)
     return Qt::NoItemFlags;
 
   if (index.column() == MM::IconAndNameColum)
@@ -167,7 +168,8 @@ bool LayerListModel::dropMimeData(const QMimeData *data, Qt::DropAction action, 
 
 bool LayerListModel::setData(const QModelIndex &index, const QVariant &value, int role)
 {
-  if (!index.isValid())
+  if (!index.isValid() || index.model() != this || index.row() < 0 ||
+      index.row() >= layerList.size() || index.column() < 0 || index.column() >= 3)
     return false;
 
   if (role == Qt::CheckStateRole && value.typeId() == QMetaType::Bool) {
@@ -249,7 +251,7 @@ void LayerListModel::clear()
 
 QModelIndex LayerListModel::getIndexFromRow(int row)
 {
-  return this->createIndex(row, 1);
+  return index(row, 1);
 }
 
 int LayerListModel::getItemRowFromId(uid id) const
@@ -265,11 +267,13 @@ int LayerListModel::getItemRowFromId(uid id) const
 
 QModelIndex LayerListModel::getIndexFromId(uid id) const
 {
-  return this->createIndex(getItemRowFromId(id), 0);
+  return index(getItemRowFromId(id), 0);
 }
 
 uid LayerListModel::getItemId(const QModelIndex &index) const
 {
+  if (!index.isValid() || index.model() != this || index.row() < 0 ||
+      index.row() >= layerList.size()) return NULL_UID;
   return layerList.at(index.row()).id;
 }
 

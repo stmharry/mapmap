@@ -103,3 +103,6 @@ trash
 
 # Local development notes
 KNOWN-WARNINGS.txt
+
+# Source-switch regression executable
+/source_switch_tests

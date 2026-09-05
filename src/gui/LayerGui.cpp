@@ -88,7 +88,9 @@ void LayerGui::setValue(QtProperty* property, const QVariant& value)
   else if (property == _sourceItem)
   {
     int sourceIndex = value.toInt();
-    Source::ptr newSource = MainWindow::window()->getMappingManager().getSource(sourceIndex);
+    const auto sources = MainWindow::window()->getMappingManager().getSourcesCompatibleWith(_layer);
+    if (sourceIndex < 0 || sourceIndex >= sources.size()) return;
+    Source::ptr newSource = sources[sourceIndex];
     if (newSource != _layer->getSource() && _layer->sourceIsCompatible(newSource)) {
       _layer->setSource(newSource);
       emit valueChanged();

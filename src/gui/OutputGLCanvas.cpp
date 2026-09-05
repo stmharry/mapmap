@@ -25,6 +25,7 @@
 #include <QGuiApplication>
 #include <QScreen>
 #include <QOpenGLWidget>
+#include <QTimer>
 
 namespace mmp {
 
@@ -43,7 +44,7 @@ OutputGLCanvas::OutputGLCanvas(MainWindow* mainWindow, QWidget* parent, QOpenGLW
 
 void OutputGLCanvas::setSceneRectToViewportGeometry()
 {
-  setSceneRect(viewport()->geometry());
+  setSceneRect(QRectF(QPointF(0, 0), viewport()->size()));
 }
 
 void OutputGLCanvas::setSyphonOutputEnabled(bool on)
@@ -291,11 +292,13 @@ void OutputGLCanvas::_drawResolutionText(QPainter *painter, const QRect &rect, i
   }
 }
 
-void OutputGLCanvas::resizeGL(int width, int height)
+void OutputGLCanvas::resizeEvent(QResizeEvent *event)
 {
-  Q_UNUSED(width);
-  Q_UNUSED(height);
-  setSceneRectToViewportGeometry();
+  QGraphicsView::resizeEvent(event);
+  QTimer::singleShot(0, this, [this]() {
+    setSceneRectToViewportGeometry();
+    centerOn(sceneRect().center());
+  });
 }
 
 void OutputGLCanvas::wheelEvent(QWheelEvent *event)

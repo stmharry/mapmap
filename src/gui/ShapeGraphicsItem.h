@@ -179,6 +179,7 @@ public:
   virtual ~TextureGraphicsItem() {}
 
 protected:
+  bool _usesImagePainter();
   virtual void _doPaint(QPainter *painter, const QStyleOptionGraphicsItem *option);
   void _prePaint(QPainter* painter, const QStyleOptionGraphicsItem *option);
   void _postPaint(QPainter* painter, const QStyleOptionGraphicsItem *option);

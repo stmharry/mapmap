@@ -218,10 +218,57 @@ TextureGraphicsItem::TextureGraphicsItem(Layer::ptr mapping, bool output)
   Q_CHECK_PTR(_inputShape);
 }
 
+bool TextureGraphicsItem::_usesImagePainter()
+{
+  return _getTexture()->getSourceType() == Source::Image &&
+      !qSharedPointerDynamicCast<Mesh>(getShape()).isNull();
+}
+
 void TextureGraphicsItem::_doPaint(QPainter *painter,
                                    const QStyleOptionGraphicsItem *option)
 {
   Q_UNUSED(option);
+  // Qt 6 does not establish the legacy fixed-function GL matrices from the
+  // QPainter transform. Use its projective image renderer for image meshes so
+  // viewport placement, HiDPI scaling and corner warps share one transform.
+  if (_usesImagePainter())
+  {
+    auto texture = _getTexture();
+    texture->lockMutex();
+    QImage frame(texture->getBits(), texture->getWidth(), texture->getHeight(),
+                 QImage::Format_RGBA8888);
+    frame = frame.mirrored(false, true); // Undo the GL-oriented row order.
+    texture->unlockMutex();
+    if (frame.isNull()) return;
+    painter->save();
+    painter->setRenderHint(QPainter::SmoothPixmapTransform);
+    painter->setOpacity(isOutput() ? getLayer()->getComputedOpacity()
+                                   : texture->getOpacity());
+    if (!isOutput())
+    {
+      if (isLayerCurrent()) painter->drawImage(texture->getRect(), frame);
+    }
+    else
+    {
+      auto inputs = qSharedPointerCast<Mesh>(_inputShape.toStrongRef())->getQuads2d();
+      auto outputs = qSharedPointerCast<Mesh>(getShape())->getQuads2d();
+      for (int x = 0; x < outputs.size(); ++x)
+        for (int y = 0; y < outputs[x].size(); ++y)
+        {
+          QPolygonF destination = mapFromScene(outputs[x][y]->toPolygon());
+          QTransform warp;
+          if (!QTransform::quadToQuad(inputs[x][y]->toPolygon(), destination, warp))
+            continue;
+          painter->save();
+          painter->setClipRegion(QRegion(destination.toPolygon()), Qt::IntersectClip);
+          painter->setWorldTransform(warp, true);
+          painter->drawImage(texture->getRect(), frame);
+          painter->restore();
+        }
+    }
+    painter->restore();
+    return;
+  }
   // Perform the actual mapping (done by subclasses).
   if (isOutput())
     _doDrawOutput(painter);
@@ -258,6 +305,7 @@ void TextureGraphicsItem::_doDrawInput(QPainter* painter)
 void TextureGraphicsItem::_prePaint(QPainter* painter,
                                     const QStyleOptionGraphicsItem *option)
 {
+  if (_usesImagePainter()) return;
 	QSharedPointer<Texture> texture = _getTexture();
 	Q_CHECK_PTR(texture);
 
@@ -313,6 +361,7 @@ void TextureGraphicsItem::_prePaint(QPainter* painter,
 void TextureGraphicsItem::_postPaint(QPainter* painter,
                                      const QStyleOptionGraphicsItem *option)
 {
+  if (_usesImagePainter()) return;
   Q_UNUSED(option);
 
   glDisable(GL_TEXTURE_2D);

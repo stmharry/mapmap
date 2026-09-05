@@ -80,7 +80,7 @@ private:
 
 protected:
   // overriden from QGlWidget:
-  virtual void resizeGL(int width, int height);
+  void resizeEvent(QResizeEvent *event) override;
 
   void wheelEvent(QWheelEvent *event);
   void mouseMoveEvent(QMouseEvent *event);
