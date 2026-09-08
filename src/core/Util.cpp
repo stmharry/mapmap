@@ -152,13 +152,25 @@ Ellipse* createEllipseForColor(int frameWidth, int frameHeight)
 
 void drawControlsVertex(QPainter* painter, const QPointF& vertex, bool major, bool selected, bool locked, MShape::ShapeMode shapeMode, qreal radius, qreal strokeWidth)
 {
-  // Init colors and stroke.
-  if (locked)
-    painter->setBrush(MM::VERTEX_LOCKED_BACKGROUND);
-  else
-    painter->setBrush(selected ? MM::VERTEX_SELECTED_BACKGROUND : MM::VERTEX_BACKGROUND);
+  painter->save();
+  painter->setRenderHint(QPainter::Antialiasing);
 
-  painter->setPen(locked ? QPen(MM::CONTROL_LOCKED_COLOR) : QPen(MM::CONTROL_COLOR, strokeWidth));
+  // Opaque handles stay readable over both bright and dark source images.
+  const QColor handleColor = locked ? MM::CONTROL_LOCKED_COLOR
+                                    : (selected ? QColor("#ffe45c") : QColor("#32dcff"));
+  painter->setBrush(locked ? MM::VERTEX_LOCKED_BACKGROUND : QBrush(handleColor));
+  painter->setPen(QPen(QColor("#111820"), strokeWidth * 3));
+  painter->drawEllipse(vertex, radius, radius);
+
+  // A white outer ring distinguishes the active vertex without relying on color.
+  if (selected && !locked)
+  {
+    painter->setBrush(Qt::NoBrush);
+    painter->setPen(QPen(Qt::white, strokeWidth * 1.5));
+    painter->drawEllipse(vertex, radius + strokeWidth * 3, radius + strokeWidth * 3);
+  }
+  painter->setBrush(locked ? MM::VERTEX_LOCKED_BACKGROUND : QBrush(handleColor));
+  painter->setPen(QPen(QColor("#111820"), strokeWidth));
 
   QRect target((vertex.x() - radius) + 1,
                (vertex.y() - radius) - 1,
@@ -192,6 +204,8 @@ void drawControlsVertex(QPainter* painter, const QPointF& vertex, bool major, bo
     // Draw rotate icons
     painter->drawPixmap(target, QPixmap(":/vertex-rotate"));
   }
+
+  painter->restore();
 
 }
 
