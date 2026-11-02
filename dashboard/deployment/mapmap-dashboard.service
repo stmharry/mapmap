@@ -1,0 +1,15 @@
+[Unit]
+Description=Private MapMap tabletop dashboard
+After=mapmap.service
+
+[Service]
+Type=simple
+WorkingDirectory=/home/harry/mapmap/dashboard
+ExecStart=/usr/local/bin/node /home/harry/mapmap/dashboard/server/index.mjs
+Environment=PORT=3210
+Restart=on-failure
+RestartSec=3
+UMask=0077
+
+[Install]
+WantedBy=default.target

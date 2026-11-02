@@ -106,3 +106,12 @@ KNOWN-WARNINGS.txt
 
 # Source-switch regression executable
 /source_switch_tests
+
+# Local dashboard and calibration runtime
+/dashboard/node_modules/
+/dashboard/dist/
+/dashboard/.venv/
+/dashboard/data/
+/dashboard/.wrangler/
+/dashboard/.vinext/
+!/dashboard/**/*.json

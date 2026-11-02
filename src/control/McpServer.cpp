@@ -30,6 +30,10 @@
 #include <QMetaProperty>
 #include <QColor>
 #include <QDebug>
+#include <QScreen>
+#include <QGuiApplication>
+#include <QSaveFile>
+#include <cmath>
 
 #include "MM.h"
 #include "Element.h"
@@ -102,14 +106,24 @@ quint16 McpServer::start(quint16 port)
 
   // Localhost only — never expose the control surface on all interfaces.
   auto *tcpServer = new QTcpServer(_httpServer);
-  if (!tcpServer->listen(QHostAddress::LocalHost, port) || !_httpServer->bind(tcpServer))
+  if (!tcpServer->listen(QHostAddress::LocalHost, port))
   {
     qWarning() << "MCP server failed to bind to port" << port;
     delete _httpServer;
     _httpServer = nullptr;
     return 0;
   }
+  _httpServer->bind(tcpServer);
   _port = tcpServer->serverPort();
+  // Optional owner-only token handoff to a local supervisor; renewed each run.
+  const QString tokenPath = qEnvironmentVariable("MAPMAP_TOKEN_FILE");
+  if (!tokenPath.isEmpty()) {
+    QSaveFile file(tokenPath);
+    if (!file.open(QIODevice::WriteOnly)) { delete _httpServer; _httpServer = nullptr; _port = 0; return 0; }
+    file.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner);
+    file.write(_token.toUtf8());
+    if (!file.commit()) { delete _httpServer; _httpServer = nullptr; _port = 0; return 0; }
+  }
   return _port;
 }
 
@@ -279,6 +293,59 @@ QJsonObject McpServer::handleToolsCall(const QJsonObject& params)
     return textResult(QString("Frame rate set to %1 fps.").arg(fps));
   }
 
+  if (name == "list_displays") {
+    QJsonArray displays;
+    const auto screens = QGuiApplication::screens();
+    for (int i=0; i<screens.size(); ++i) {
+      const auto screen=screens[i]; const auto r=screen->geometry();
+      displays.append(QJsonObject{{"index",i},{"name",screen->name()},
+        {"width",r.width()},{"height",r.height()},{"x",r.x()},{"y",r.y()},
+        {"devicePixelRatio",screen->devicePixelRatio()},{"manufacturer",screen->manufacturer()},
+        {"model",screen->model()}});
+    }
+    return jsonResult(QJsonObject{{"displays",displays},
+      {"selected",_mainWindow->getOutputWindow()->getPreferredScreen()},
+      {"fullscreen",_mainWindow->getOutputWindow()->isFullScreen()}});
+  }
+  if (name == "set_output_display") {
+    const auto screens=QGuiApplication::screens();
+    int index=-1;
+    for(int i=0;i<screens.size();++i) if(screens[i]->name()==args["name"].toString()) index=i;
+    if(index<0) return textResult("Display is not connected.",true);
+    auto *output=_mainWindow->getOutputWindow();
+    const bool fullscreen=output->isFullScreen();
+    output->setFullScreen(false); output->setPreferredScreen(index);
+    output->setFullScreen(fullscreen);
+    return textResult("Output display selected.");
+  }
+  if (name == "set_output_fullscreen") {
+    if (!args["enabled"].isBool()) return textResult("enabled must be boolean.",true);
+    _mainWindow->getOutputWindow()->setFullScreen(args["enabled"].toBool());
+    return textResult("Output fullscreen updated.");
+  }
+  if (name == "set_layer_source") {
+    auto layer=mm.getLayerById(args["id"].toInt());
+    auto source=mm.getSourceById(args["source_id"].toInt());
+    if(!layer || !source || !layer->sourceIsCompatible(source))
+      return textResult("Missing layer or incompatible source.",true);
+    layer->setSource(source); _mainWindow->updateCanvases();
+    return jsonResult(layerSummary(layer->getId()));
+  }
+  if (name == "rotate_source_180") {
+    auto layer=mm.getLayerById(args["id"].toInt());
+    auto texture=layer ? qSharedPointerDynamicCast<Texture>(layer->getSource()) : QSharedPointer<Texture>();
+    if(!layer || !texture || !layer->getInputShape()) return textResult("A texture layer is required.",true);
+    const auto r=texture->getRect(); const auto shape=layer->getInputShape();
+    QVector<QPointF> rotated;
+    for(int i=0;i<shape->nVertices();++i) {
+      const auto p=shape->getVertex(i);
+      rotated.append(QPointF(2*r.center().x()-p.x(),2*r.center().y()-p.y()));
+    }
+    // Replace atomically: per-vertex setters constrain intermediate polygons.
+    shape->setVertices(rotated);
+    _mainWindow->updateCanvases(); return jsonResult(layerSummary(layer->getId()));
+  }
+
   // ---- Sources ----
   if (name == "create_color_source")
   {
@@ -370,12 +437,27 @@ QJsonObject McpServer::handleToolsCall(const QJsonObject& params)
     for (const QJsonValue& v : verts)
     {
       const QJsonObject pt = v.toObject();
+      if(!pt["x"].isDouble() || !pt["y"].isDouble() ||
+         !std::isfinite(pt["x"].toDouble()) || !std::isfinite(pt["y"].toDouble()))
+        return textResult("Vertices must contain finite numeric x and y.",true);
       points.append(QPointF(pt.value("x").toDouble(), pt.value("y").toDouble()));
     }
     MShape::ptr shape = layer->getShape();
     if (shape.isNull()) return textResult("Layer has no shape.", true);
     if (points.size() != shape->nVertices())
       return textResult(QString("Expected %1 vertices, got %2.").arg(shape->nVertices()).arg(points.size()), true);
+    // The tabletop Mesh stores vertices in row-major order, not polygon order.
+    if (points.size()==4) {
+      const bool mesh=bool(qSharedPointerDynamicCast<Mesh>(shape));
+      const QVector<int> order=mesh ? QVector<int>{0,1,3,2} : QVector<int>{0,1,2,3};
+      double sign=0;
+      for(int i=0;i<4;++i) {
+        const auto a=points[order[i]], b=points[order[(i+1)%4]], c=points[order[(i+2)%4]];
+        const double cross=(b.x()-a.x())*(c.y()-b.y())-(b.y()-a.y())*(c.x()-b.x());
+        if(std::abs(cross)<1e-6 || (i && sign*cross<=0)) return textResult("Quad must be convex and non-degenerate.",true);
+        sign=cross;
+      }
+    }
     shape->setVertices(points);
     _mainWindow->updateCanvases();
     return textResult(QString("Set %1 vertices on layer %2.").arg(points.size()).arg(id));
@@ -491,6 +573,15 @@ QJsonObject McpServer::layerSummary(int layerId) const
   o["depth"] = layer->getDepth();
   o["opacity"] = layer->getOpacity();
   o["sourceId"] = layer->getSource().isNull() ? -1 : static_cast<qint64>(layer->getSourceId());
+  auto vertices=[](MShape::ptr shape) {
+    QJsonArray result;
+    if(shape) for(int i=0;i<shape->nVertices();++i) {
+      auto p=shape->getVertex(i); result.append(QJsonObject{{"x",p.x()},{"y",p.y()}});
+    }
+    return result;
+  };
+  o["vertices"]=vertices(layer->getShape());
+  o["inputVertices"]=vertices(layer->getInputShape());
   return o;
 }
 
@@ -538,6 +629,11 @@ QJsonArray McpServer::toolDefinitions() const
   };
 
   QJsonArray tools;
+  tools.append(tool("list_displays", "List connected Qt displays and output state.", {}, {}));
+  tools.append(tool("set_output_display", "Select a connected display by name.", {{"name",prop("string","Qt display name")}}, {"name"}));
+  tools.append(tool("set_output_fullscreen", "Set fullscreen output.", {{"enabled",prop("boolean","Fullscreen")}}, {"enabled"}));
+  tools.append(tool("set_layer_source", "Switch source preserving output vertices and normalized crop.", {{"id",prop("integer","Layer")},{"source_id",prop("integer","Source")}}, {"id","source_id"}));
+  tools.append(tool("rotate_source_180", "Rotate input sampling 180 degrees without changing output geometry.", {{"id",prop("integer","Layer")}}, {"id"}));
 
   tools.append(tool("play", "Start playback of all sources.", QJsonObject(), QJsonArray()));
   tools.append(tool("pause", "Pause playback.", QJsonObject(), QJsonArray()));

@@ -3987,7 +3987,9 @@ void MainWindow::startMcpServer()
   if (boundPort != 0)
     QMessageLogger(__FILE__, __LINE__, 0).info()
       << "MCP server listening on http://localhost:" << boundPort
-      << "/mcp (Authorization: Bearer " << qUtf8Printable(mcp_server->token()) << ")";
+      << (qEnvironmentVariableIsSet("MAPMAP_TOKEN_FILE")
+          ? QString("/mcp (token available through MAPMAP_TOKEN_FILE)")
+          : QString("/mcp (Authorization: Bearer %1)").arg(mcp_server->token()));
   else
     qWarning() << "MCP server could not start on port" << mcpListeningPort;
 }

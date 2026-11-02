@@ -94,11 +94,13 @@ void Layer::setSource(Source::ptr source)
   if (_inputShape && oldTexture && newTexture) {
     const QRectF from = oldTexture->getRect(), to = newTexture->getRect();
     if (from.width() > 0 && from.height() > 0 && to.width() > 0 && to.height() > 0) {
+      QVector<QPointF> normalized;
       for (int i = 0; i < _inputShape->nVertices(); ++i) {
         const QPointF p = _inputShape->getVertex(i);
-        _inputShape->setVertex(i, to.x() + (p.x() - from.x()) * to.width() / from.width(),
-                                 to.y() + (p.y() - from.y()) * to.height() / from.height());
+        normalized.append(QPointF(to.x() + (p.x() - from.x()) * to.width() / from.width(),
+                                  to.y() + (p.y() - from.y()) * to.height() / from.height()));
       }
+      _inputShape->setVertices(normalized);
     }
   }
   _source = source;

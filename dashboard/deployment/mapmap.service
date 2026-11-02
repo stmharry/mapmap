@@ -1,0 +1,17 @@
+[Unit]
+Description=MapMap tabletop projector
+After=graphical-session.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/harry/mapmap
+ExecStart=/home/harry/mapmap/dashboard/server/start-mapmap.sh
+Environment=DISPLAY=:0
+Environment=XAUTHORITY=/run/user/1007/gdm/Xauthority
+Environment=MAPMAP_TOKEN_FILE=/home/harry/mapmap/dashboard/data/mcp.token
+Restart=on-failure
+RestartSec=3
+UMask=0077
+
+[Install]
+WantedBy=default.target
